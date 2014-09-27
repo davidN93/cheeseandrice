@@ -4,3 +4,6 @@ List of features :
 - File transfer through SSH, FTP, Z-MODEM.
 - History in command
 
+Commands : 
+
+-ctrl + m for sending with Z-Modem. lrzsz has to be installed

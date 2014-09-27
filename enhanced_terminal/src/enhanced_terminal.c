@@ -61,7 +61,7 @@ static int openPort(char *port,int flow,int speed)
 	conf.c_lflag = 0;
 	conf.c_cflag = speed | CS8 | CREAD | CLOCAL;
 	if (flow) conf.c_cflag |= CRTSCTS;
-    ret = tcsetattr(fd,TCSANOW,&conf);
+	ret = tcsetattr(fd,TCSANOW,&conf);
 	if (ret) {
 		return -1;
 	}
@@ -81,11 +81,11 @@ static enum {
 
 int set_tty_raw(void) 
 {
-	int i;
+	int ret;
 
-	i = tcgetattr (STDIN_FILENO, &termattr);
-	if (i < 0) {
-		printf("tcgetattr() returned %d for fildes=%d\n",i,STDIN_FILENO); 
+	ret = tcgetattr (STDIN_FILENO, &termattr);
+	if (ret < 0) {
+		printf("tcgetattr() returned %d for fildes=%d\n",ret,STDIN_FILENO); 
 		perror ("");
 		return -1;
 	}
@@ -100,9 +100,9 @@ int set_tty_raw(void)
 	termattr.c_cc[VMIN] = 1;  /* or 0 for some Unices;  see note 1 */
 	termattr.c_cc[VTIME] = 0;
 
-	i = tcsetattr (STDIN_FILENO, TCSANOW, &termattr);
-	if (i < 0) {
-		printf("tcsetattr() returned %d for fildes=%d\n",i,STDIN_FILENO); 
+	ret = tcsetattr (STDIN_FILENO, TCSANOW, &termattr);
+	if (ret < 0) {
+		printf("tcsetattr() returned %d for fildes=%d\n",ret,STDIN_FILENO); 
 		perror("");
 		return -1;
 	}
@@ -112,10 +112,11 @@ int set_tty_raw(void)
 
 int set_tty_cooked() 
 {
-	int i;
+	int ret;
+
 	if (ttystate!=CBREAK && ttystate!=RAW) return 0;
-	i = tcsetattr (STDIN_FILENO, TCSAFLUSH, &save_termattr);
-	if (i < 0) return -1;
+	ret = tcsetattr (STDIN_FILENO, TCSAFLUSH, &save_termattr);
+	if (ret < 0) return -1;
 	ttystate = RESET;
 	return 0;
 }
@@ -133,7 +134,20 @@ unsigned char kb_getc_w(void)
 	return ch;
 }
 
-void echo(unsigned char ch);
+void echo(unsigned char ch)
+{
+	switch (how_echo) {
+		case CH_HEX:
+			printf("0x%x  ",ch);
+		break;
+	
+		default:
+		case CH_ONLY:
+			printf("%c", ch);
+		break;
+	}
+	fflush(stdout);      /* push it out */
+}
 
 static enum { 
 	CH_ONLY, CH_HEX 
@@ -142,13 +156,13 @@ static enum {
 int main(int argc,char * argv[])
 {
 	unsigned char ch;
-    pthread_t thread;
-    char str[256];
-    int speed;
+	pthread_t thread;
+	char str[256];
+	int speed;
 	
 	if (argc != 5) {
 		fprintf(stderr,"usage: enhanced_terminal [baud] [port] [target console port] [file to send]\n");
-		fprintf(stderr,"example: enhanced_terminal 115200 /dev/ttyUSB1 /dev/ttyS0 /Europa/TwitooV2/Release/TwitooV2\n");
+		fprintf(stderr,"example: enhanced_terminal 115200 /dev/ttyUSB1 /dev/ttyS0 /tmp/toto\n");
 		return 1;
 	}
 	if (!strcmp(argv[1],"115200")) speed = B115200;
@@ -159,7 +173,7 @@ int main(int argc,char * argv[])
 	else if (!strcmp(argv[1],"19200")) speed = B19200;
 	else if (!strcmp(argv[1],"38400")) speed = B38400;
 	else if (!strcmp(argv[1],"57600")) speed = B57600;
-	else speed = B9600;
+	else speed = B115200;
 	port = argv[2];
 	tport = argv[3];
 	file = argv[4];
@@ -169,7 +183,7 @@ int main(int argc,char * argv[])
 		return 1;
 	}
     
-    pthread_create(&thread,NULL,serialIn,NULL);
+	pthread_create(&thread,NULL,serialIn,NULL);
 	
 	set_tty_raw();         /* set up character-at-a-time */
   
@@ -177,43 +191,28 @@ int main(int argc,char * argv[])
 		usleep(10000);       // 1/50th second
 		ch = kb_getc_w();      /* char typed by user? */
 		switch (ch) {
-				//uncomment if z-modem transfer needed
-			//case 0x1a: // control-Z -> zmodem.
-			//ReadEnable = 0; // stop reading serial port.
-			//serialOut(0x0d);
-			//if (!strcmp(tport,"-")) sprintf(str,"rz -q\n");
-			//else sprintf(str,"rz -q <%s >%s\n",tport,tport);
-			//serialStrOut(str); // put target in receiving mode.
-			//sprintf(str,"sz --zmodem -b -w 1024 -l 1024 -L 1024 %s <%s >%s",file,port,port); // > 4900 BPS
-			//system(str);
+			case 0x0d: //ctrl+M -> zmodem.
+				ReadEnable = 0; // stop reading serial port.
+				serialOut(0x0d);
+				if (!strcmp(tport,"-")) sprintf(str,"rz -q\n");
+				else sprintf(str,"rz -q <%s >%s\n",tport,tport);
+				serialStrOut(str); // put target in receiving mode.
+				sprintf(str,"sz --zmodem -b -w 1024 -l 1024 -L 1024 %s <%s >%s",file,port,port); // > 4900 BPS
+				system(str);
+				break;
 			
-			case 0x11: // control-Q -> quit.
-			set_tty_cooked();  // restore normal TTY mode */
-			printf("\r\n");
-			if (fds != -1) close(fds);
-			return 0;
+			case 0x11: // ctrl+Q -> quit.
+				set_tty_cooked();  // restore normal TTY mode */
+				printf("\r\n");
+				if (fds != -1) close(fds);
+				return 0;
 			
 			default:
-			break;
+				break;
 		}
-//		echo(ch);            /* not control-Q, echo it */
+//		echo(ch);     
 		serialOut(ch);
 	}
 	return 0;
-}
-
-void echo(unsigned char ch)
-{
-	switch (how_echo) {
-		case CH_HEX:
-		printf("0x%x  ",ch);
-		break;
-	
-		default:
-		case CH_ONLY:
-		printf("%c", ch);
-		break;
-	}
-	fflush(stdout);      /* push it out */
 }
 
